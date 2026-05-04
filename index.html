@@ -3,38 +3,461 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Happy Birthday! 🎂</title>
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=Poppins:wght@300;400;600&display=swap" rel="stylesheet">
+<title>Matrix Morphing v3</title>
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
+*{margin:0;padding:0;box-sizing:border-box}
+body,html{width:100%;height:100%;background:#000;overflow:hidden;font-family:'Courier New',monospace}
+canvas{display:block;position:fixed;top:0;left:0}
+#main     {z-index:1}
+#particles{z-index:2;pointer-events:none}
+#bloom    {z-index:3;pointer-events:none;mix-blend-mode:screen;opacity:0.3}
+#vignette {position:fixed;inset:0;z-index:10;pointer-events:none;
+  background:radial-gradient(ellipse at center,transparent 45%,rgba(0,0,0,0.8) 100%)}
+#scanlines{position:fixed;inset:0;z-index:11;pointer-events:none;
+  background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,0.07) 3px,rgba(0,0,0,0.07) 4px)}
+#ui{position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;cursor:pointer;transition:opacity .8s}
+#ui.gone{opacity:0;pointer-events:none}
+.ring{width:100px;height:100px;border:1.5px solid #0f9;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  animation:pulse 2s ease-in-out infinite;
+  box-shadow:0 0 20px rgba(0,255,150,.3),inset 0 0 20px rgba(0,255,150,.05)}
+.arrow{width:0;height:0;border-top:16px solid transparent;border-bottom:16px solid transparent;
+  border-left:28px solid #0f9;margin-left:6px;filter:drop-shadow(0 0 6px #0f9)}
+.lbl{margin-top:20px;color:#0f9;font-size:11px;letter-spacing:6px;animation:blink 1.4s step-end infinite}
+@keyframes pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.06);opacity:.6}}
+@keyframes blink{50%{opacity:0}}
+</style>
+</head>
+<body>
+<canvas id="main"></canvas>
+<canvas id="particles"></canvas>
+<canvas id="bloom"></canvas>
+<div id="vignette"></div>
+<div id="scanlines"></div>
+<div id="ui">
+  <div class="ring"><div class="arrow"></div></div>
+  <div class="lbl">CLICK TO START</div>
+</div>
+<script>
+// ── CANVAS SETUP ───────────────────────────────────────
+const MC   = document.getElementById('main');
+const PC   = document.getElementById('particles');
+const BC   = document.getElementById('bloom');
+const mCtx = MC.getContext('2d');
+const pCtx = PC.getContext('2d');
+const bCtx = BC.getContext('2d');
+let W = 0, H = 0;
+let imgData, buf32;
 
-  :root {
-    --gold: #FFD700;
-    --rose: #FF6B8A;
-    --deep: #1a0a2e;
-    --purple: #8B5CF6;
-    --cyan: #06B6D4;
-    --pink: #EC4899;
+function resize() {
+  W = window.innerWidth; H = window.innerHeight;
+  MC.width = PC.width = BC.width  = W;
+  MC.height = PC.height = BC.height = H;
+  mCtx.fillStyle = '#000';
+  mCtx.fillRect(0, 0, W, H);
+  if (W > 0 && H > 0) {
+    imgData = pCtx.createImageData(W, H);
+    buf32   = new Uint32Array(imgData.data.buffer);
+  }
+}
+window.addEventListener('resize', resize);
+
+// ── MATRIX RAIN ────────────────────────────────────────
+const CHARS = 'アイウエオカキクケコサシスセソタチツテトナニヌネノLeKimLam16052011';
+let rainDrops, rainSpd, rainCols, rainHue = 0;
+
+function initRain() {
+  rainCols  = Math.floor(W / 13);
+  rainDrops = new Float32Array(rainCols);
+  rainSpd   = new Float32Array(rainCols);
+  for (let i = 0; i < rainCols; i++) {
+    rainDrops[i] = Math.random() * -60;
+    rainSpd[i]   = 0.4 + Math.random() * 0.9;
+  }
+}
+
+function drawRain() {
+  mCtx.globalAlpha = 0.12;
+  mCtx.fillStyle = '#000';
+  mCtx.fillRect(0, 0, W, H);
+  mCtx.globalAlpha = 1;
+  mCtx.font = '13px monospace';
+  rainHue = (rainHue + 0.4) % 360;
+  for (let i = 0; i < rainCols; i++) {
+    const y = rainDrops[i] * 13;
+    const h = (rainHue + i * 3) % 360;
+    mCtx.fillStyle = `hsl(${h},100%,82%)`;
+    mCtx.fillText(CHARS[Math.random() * CHARS.length | 0], i * 13, y);
+    if (y > 13) {
+      mCtx.fillStyle = `hsl(${h},100%,38%)`;
+      mCtx.fillText(CHARS[Math.random() * CHARS.length | 0], i * 13, y - 13);
+    }
+    if (y > H && Math.random() > 0.975) rainDrops[i] = 0;
+    rainDrops[i] += rainSpd[i];
+  }
+}
+
+// ── PARTICLE SYSTEM ────────────────────────────────────
+const MAX_P = 14000;
+const ppx = new Float32Array(MAX_P), ppy = new Float32Array(MAX_P);
+const pvx = new Float32Array(MAX_P), pvy = new Float32Array(MAX_P);
+const ptx = new Float32Array(MAX_P), pty = new Float32Array(MAX_P);
+const pcR = new Uint8Array(MAX_P), pcG = new Uint8Array(MAX_P), pcB = new Uint8Array(MAX_P);
+let pCount = 0;
+const SPR_ASSEMBLE = 0.032;  // lực kéo lại khi tụ
+const SPR_EXPLODE  = 0.012; // lực đẩy ra khi phát nổ (yếu hơn = bay chậm đẹp hơn)
+const FRI = 0.96;
+
+let currentSpr = SPR_ASSEMBLE;
+let phase = 'idle'; // 'explode' | 'assemble'
+
+function initParticles(n) {
+  pCount = n;
+  for (let i = 0; i < n; i++) {
+    ppx[i] = Math.random() * W; ppy[i] = Math.random() * H;
+    pvx[i] = 0; pvy[i] = 0;
+    ptx[i] = ppx[i]; pty[i] = ppy[i];
+  }
+}
+
+function setTargets(pts) {
+  const n = Math.min(pts.length, MAX_P);
+  for (let i = pCount; i < n; i++) {
+    ppx[i] = W/2 + (Math.random()-0.5)*80;
+    ppy[i] = H/2 + (Math.random()-0.5)*80;
+    pvx[i] = 0; pvy[i] = 0;
+  }
+  pCount = n;
+  for (let i = 0; i < n; i++) {
+    ptx[i] = pts[i].x; pty[i] = pts[i].y;
+    pcR[i] = pts[i].r; pcG[i] = pts[i].g; pcB[i] = pts[i].b;
+  }
+}
+
+function explodeParticles() {
+  phase = 'explode';
+  currentSpr = SPR_EXPLODE;
+  for (let i = 0; i < pCount; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const d = 180 + Math.random() * Math.max(W, H) * 0.65;
+
+    ptx[i] = W/2 + Math.cos(a) * d;
+    pty[i] = H/2 + Math.sin(a) * d;
+  }
+}
+
+function assembleParticles(pts) {
+  phase = 'assemble';
+  setTargets(pts);
+  currentSpr = SPR_ASSEMBLE;
+}
+
+function scatterParticles() {
+  currentSpr = SPR_EXPLODE;
+  for (let i = 0; i < pCount; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const d = 400 + Math.random() * Math.max(W, H);
+
+    ptx[i] = W/2 + Math.cos(a) * d;
+    pty[i] = H/2 + Math.sin(a) * d;
+  }
+}
+
+function updateDrawParticles() {
+  if (!buf32) return;
+  buf32.fill(0);
+  // Tốc độ lerp: assemble rõ, explode nhẹ
+  const lerpT = (phase === 'assemble') ? 0.08 : 0.025;
+  for (let i = 0; i < pCount; i++) {
+    ppx[i] += (ptx[i] - ppx[i]) * lerpT;
+    ppy[i] += (pty[i] - ppy[i]) * lerpT;
+
+    const xi = ppx[i] | 0, yi = ppy[i] | 0;
+    if (xi < 1 || xi >= W-1 || yi < 1 || yi >= H-1) continue;
+
+    const col = 0xFF000000 | (pcB[i] << 16) | (pcG[i] << 8) | pcR[i];
+    const idx = yi * W + xi;
+    buf32[idx] = col; buf32[idx+1] = col; buf32[idx+W] = col;
+  }
+  pCtx.putImageData(imgData, 0, 0);
+}
+
+// ── BLOOM ──────────────────────────────────────────────
+let bloomTick = 0;
+function renderBloom() {
+  if (++bloomTick % 4 !== 0) return;
+  bCtx.clearRect(0, 0, W, H);
+  bCtx.filter = 'blur(10px)';
+  bCtx.drawImage(PC, 0, 0);
+  bCtx.filter = 'none';
+}
+
+// ── GLITCH ─────────────────────────────────────────────
+let glitchEnd = 0;
+function triggerGlitch() { glitchEnd = performance.now() + 400; }
+function applyGlitch() {
+  if (performance.now() >= glitchEnd) return;
+  const t = (glitchEnd - performance.now()) / 400;
+  for (let i = 0; i < 2; i++) {
+    const sy = Math.random() * H | 0;
+    const sh = (6 + Math.random() * 18) | 0;
+    const ox = ((Math.random() * 40 - 20) * t) | 0;
+    mCtx.drawImage(MC, 0, sy, W, sh, ox, sy, W, sh);
+  }
+}
+
+// ── TEXT SAMPLING ──────────────────────────────────────
+const offC = document.createElement('canvas');
+const offX = offC.getContext('2d', { willReadFrequently: true });
+
+function hslToRgb(h, s, l) {
+  s /= 100; l /= 100;
+  const k = n => (n + h/30) % 12;
+  const a = s * Math.min(l, 1-l);
+  const f = n => Math.round((l - a * Math.max(-1, Math.min(k(n)-3, Math.min(9-k(n),1)))) * 255);
+  return [f(0), f(8), f(4)];
+}
+
+function drawCake(cx, cy, scale) {
+  const s = scale;
+  offX.save();
+  offX.translate(cx, cy);
+  offX.fillStyle = '#fff';
+
+  // ── TẦNG 1 (đáy) ──
+  const t1y = s*0.28, t1rx = s*0.58, t1ry = s*0.13, t1h = s*0.34;
+  // thân hình thang bo góc
+  offX.beginPath();
+  offX.moveTo(-t1rx, t1y - t1h);
+  offX.lineTo( t1rx, t1y - t1h);
+  offX.lineTo( t1rx, t1y);
+  offX.lineTo(-t1rx, t1y);
+  offX.closePath(); offX.fill();
+  offX.beginPath(); offX.ellipse(0, t1y-t1h, t1rx, t1ry, 0,0,Math.PI*2); offX.fill();
+  offX.beginPath(); offX.ellipse(0, t1y,     t1rx, t1ry, 0,0,Math.PI*2); offX.fill();
+
+  // viền sóng kem tầng 1
+  offX.beginPath();
+  for(let i=0;i<=16;i++){
+    const wx = -t1rx + (i/16)*t1rx*2;
+    const wy = t1y - t1h - t1ry*0.5 - Math.sin(i*1.1)*s*0.055;
+    i===0 ? offX.moveTo(wx,wy) : offX.lineTo(wx,wy);
+  }
+  for(let i=16;i>=0;i--){
+    const wx = -t1rx + (i/16)*t1rx*2;
+    offX.lineTo(wx, t1y - t1h - t1ry*0.5 + s*0.03);
+  }
+  offX.closePath(); offX.fill();
+
+  // chấm trang trí tầng 1
+  for(let i=0;i<6;i++){
+    const dx = -t1rx*0.7 + i*(t1rx*1.4/5);
+    offX.beginPath();
+    offX.arc(dx, t1y - t1h*0.5, s*0.03, 0, Math.PI*2);
+    offX.fill();
   }
 
-  body {
-    background: var(--deep);
-    font-family: 'Poppins', sans-serif;
-    overflow-x: hidden;
-    min-height: 100vh;
-    cursor: none;
+  // ── TẦNG 2 (giữa) ──
+  const t2y = -s*0.13, t2rx = s*0.40, t2ry = s*0.10, t2h = s*0.28;
+  offX.beginPath();
+  offX.moveTo(-t2rx, t2y-t2h); offX.lineTo(t2rx, t2y-t2h);
+  offX.lineTo(t2rx, t2y);      offX.lineTo(-t2rx, t2y);
+  offX.closePath(); offX.fill();
+  offX.beginPath(); offX.ellipse(0, t2y-t2h, t2rx, t2ry, 0,0,Math.PI*2); offX.fill();
+  offX.beginPath(); offX.ellipse(0, t2y,     t2rx, t2ry, 0,0,Math.PI*2); offX.fill();
+
+  // viền sóng kem tầng 2
+  offX.beginPath();
+  for(let i=0;i<=12;i++){
+    const wx = -t2rx + (i/12)*t2rx*2;
+    const wy = t2y - t2h - t2ry*0.5 - Math.sin(i*1.3)*s*0.048;
+    i===0 ? offX.moveTo(wx,wy) : offX.lineTo(wx,wy);
+  }
+  for(let i=12;i>=0;i--){
+    offX.lineTo(-t2rx+(i/12)*t2rx*2, t2y-t2h-t2ry*0.5+s*0.025);
+  }
+  offX.closePath(); offX.fill();
+
+  // chấm trang trí tầng 2
+  for(let i=0;i<4;i++){
+    const dx = -t2rx*0.6 + i*(t2rx*1.2/3);
+    offX.beginPath();
+    offX.arc(dx, t2y - t2h*0.5, s*0.028, 0, Math.PI*2);
+    offX.fill();
   }
 
-  /* Custom cursor */
-  .cursor {
-    width: 20px; height: 20px;
-    border: 2px solid var(--gold);
-    border-radius: 50%;
-    position: fixed;
-    pointer-events: none;
-    z-index: 9999;
-    transition: transform 0.1s;
-    mix-blend-mode: difference;
+  // ── TẦNG 3 (trên) ──
+  const t3y = -s*0.48, t3rx = s*0.24, t3ry = s*0.07, t3h = s*0.20;
+  offX.beginPath();
+  offX.moveTo(-t3rx, t3y-t3h); offX.lineTo(t3rx, t3y-t3h);
+  offX.lineTo(t3rx, t3y);      offX.lineTo(-t3rx, t3y);
+  offX.closePath(); offX.fill();
+  offX.beginPath(); offX.ellipse(0, t3y-t3h, t3rx, t3ry, 0,0,Math.PI*2); offX.fill();
+  offX.beginPath(); offX.ellipse(0, t3y,     t3rx, t3ry, 0,0,Math.PI*2); offX.fill();
+
+  // viền sóng kem tầng 3
+  offX.beginPath();
+  for(let i=0;i<=8;i++){
+    const wx = -t3rx + (i/8)*t3rx*2;
+    const wy = t3y - t3h - t3ry*0.5 - Math.sin(i*1.5)*s*0.038;
+    i===0 ? offX.moveTo(wx,wy) : offX.lineTo(wx,wy);
+  }
+  for(let i=8;i>=0;i--){
+    offX.lineTo(-t3rx+(i/8)*t3rx*2, t3y-t3h-t3ry*0.5+s*0.02);
+  }
+  offX.closePath(); offX.fill();
+
+  // ── NẾN (5 cái) ──
+  const cxArr = [-t3rx*0.8, -t3rx*0.35, 0, t3rx*0.35, t3rx*0.8];
+  cxArr.forEach((cx2, idx) => {
+    const baseY = t3y - t3h - t3ry*0.4;
+    const cH    = s * (0.16 + (idx%2)*0.04);
+    const cW    = s * 0.028;
+    // thân nến
+    offX.beginPath();
+    offX.roundRect(cx2-cW, baseY-cH, cW*2, cH, s*0.01);
+    offX.fill();
+    // lửa — giọt nước
+    offX.beginPath();
+    offX.moveTo(cx2, baseY - cH - s*0.10);
+    offX.bezierCurveTo(
+      cx2 + s*0.04, baseY - cH - s*0.05,
+      cx2 + s*0.035, baseY - cH,
+      cx2, baseY - cH + s*0.01
+    );
+    offX.bezierCurveTo(
+      cx2 - s*0.035, baseY - cH,
+      cx2 - s*0.04, baseY - cH - s*0.05,
+      cx2, baseY - cH - s*0.10
+    );
+    offX.fill();
+  });
+
+  // ── SAO TRÊN ĐỈNH ──
+  const starY = t3y - t3h - t3ry - s*0.08;
+  offX.beginPath();
+  for(let i=0;i<10;i++){
+    const r2 = i%2===0 ? s*0.07 : s*0.03;
+    const a = (i/10)*Math.PI*2 - Math.PI/2;
+    const sx = Math.cos(a)*r2, sy = starY + Math.sin(a)*r2;
+    i===0 ? offX.moveTo(sx,sy) : offX.lineTo(sx,sy);
+  }
+  offX.closePath(); offX.fill();
+
+  offX.restore();
+}
+
+function sampleText(text, fontSize) {
+  offC.width = W; offC.height = H;
+  offX.clearRect(0, 0, W, H);
+  offX.fillStyle = '#fff';
+
+  if (text === '__CAKE__') {
+    drawCake(W/2, H/2, fontSize * 0.9);
+  } else {
+    offX.font = `900 ${fontSize}px Arial Black,Arial,sans-serif`;
+    offX.textAlign = 'center';
+    offX.textBaseline = 'middle';
+    offX.fillText(text, W/2, H/2);
+  }
+
+  const d = offX.getImageData(0, 0, W, H).data;
+  const pts = [];
+  const gap = 5;
+  for (let y = 0; y < H; y += gap)
+    for (let x = 0; x < W; x += gap)
+      if (d[(y*W+x)*4+3] > 128) {
+        const hue = ((x/W)*280 + (y/H)*80) % 360;
+        const [r,g,b] = hslToRgb(hue, 90, 62);
+        pts.push({x, y, r, g, b});
+      }
+  return pts;
+}
+
+// ── SEQUENCE ───────────────────────────────────────────
+// Mỗi item: hiển thị -> explode (800ms bay) -> assemble next
+const SEQ = [
+  { t:'3',           sz:360, hold:1800, gl:false },
+  { t:'2',           sz:360, hold:1800, gl:false },
+  { t:'1',           sz:360, hold:1800, gl:true  },
+  { t:'__CAKE__',     sz:260, hold:2200, gl:false },
+  { t:'16.05.2026',  sz:120, hold:3200, gl:false },
+  { t:'HAPPY BIRTHDAY', sz:130, hold:3000, gl:true  },
+  { t:'Lê Kim Lâm',   sz:195, hold:5000, gl:false },
+  { t:'__SCATTER__', sz:0,   hold:3500, gl:false },
+];
+let si = 0, playing = false;
+const EXPLODE_DUR = 1400; // ms tản ra trước khi tụ
+
+function runNext() {
+  if (si >= SEQ.length) return;
+  const s = SEQ[si++];
+
+  if (s.t === '__SCATTER__') {
+    scatterParticles();
+    return;
+  }
+
+  // Bước 1: tản ra như bụi cát
+  explodeParticles();
+  if (s.gl) triggerGlitch();
+
+  // Bước 2: tụ vào hình mới
+  setTimeout(() => {
+    const pts = sampleText(s.t, Math.min(s.sz, W * 0.82));
+    assembleParticles(pts);
+    // Bước 3: giữ hình rồi chuyển tiếp
+    if (si < SEQ.length) setTimeout(runNext, s.hold);
+  }, EXPLODE_DUR);
+}
+
+// ── RENDER LOOP ────────────────────────────────────────
+let last = 0;
+function frame(ts) {
+  requestAnimationFrame(frame);
+  if (ts - last < 10) return;
+  last = ts;
+  drawRain();
+  if (playing) {
+    updateDrawParticles();
+    applyGlitch();
+    renderBloom();
+  }
+}
+
+// ── INIT ───────────────────────────────────────────────
+resize();
+initRain();
+requestAnimationFrame(frame);
+
+document.getElementById('ui').addEventListener('click', () => {
+  document.getElementById('ui').classList.add('gone');
+  playing = true;
+  initParticles(5000);
+  const first = SEQ[si++];
+  const pts = sampleText(first.t, Math.min(first.sz, W * 0.82));
+  assembleParticles(pts);
+  if (first.gl) triggerGlitch();
+  if (si < SEQ.length) setTimeout(runNext, first.hold);
+});
+</script>
+</body>
+</html>requestAnimationFrame(frame);
+
+document.getElementById('ui').addEventListener('click', () => {
+  document.getElementById('ui').classList.add('gone');
+  playing = true;
+  initParticles(5000);
+  const first = SEQ[si++];
+  const pts = sampleText(first.t, Math.min(first.sz, W * 0.82));
+  assembleParticles(pts);
+  if (first.gl) triggerGlitch();
+  if (si < SEQ.length) setTimeout(runNext, first.hold);
+});
+</script>
+</body>
+</html>    mix-blend-mode: difference;
   }
   .cursor-dot {
     width: 6px; height: 6px;
