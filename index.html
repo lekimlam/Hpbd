@@ -17,7 +17,6 @@ canvas{display:block;position:fixed;top:0;left:0}
   background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,0.07) 3px,rgba(0,0,0,0.07) 4px)}
 #ui{position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;
   align-items:center;justify-content:center;cursor:pointer;transition:opacity .8s;
-  /* Đảm bảo UI nhận tương tác tốt trên mọi thiết bị */
   touch-action: manipulation; -webkit-tap-highlight-color: transparent;}
 #ui.gone{opacity:0;pointer-events:none}
 .ring{width:100px;height:100px;border:1.5px solid #0f9;border-radius:50%;
@@ -39,7 +38,6 @@ canvas{display:block;position:fixed;top:0;left:0}
 <div id="scanlines"></div>
 <div id="ui">
   <div class="ring"><div class="arrow"></div></div>
-  <!-- Đã thay đổi chữ tại đây -->
   <div class="lbl">Ấn đi Lê Kim Lâm</div>
 </div>
 <script>
@@ -124,7 +122,6 @@ const pcR = new Uint8Array(MAX_P), pcG = new Uint8Array(MAX_P), pcB = new Uint8A
 let pCount = 0;
 const SPR_ASSEMBLE = 0.032;  
 const SPR_EXPLODE  = 0.012; 
-const FRI = 0.96;
 
 let currentSpr = SPR_ASSEMBLE;
 let phase = 'idle'; 
@@ -433,7 +430,6 @@ resize();
 requestAnimationFrame(frame);
 
 function startShow() {
-  document.getElementById('ui').classList.add('gone');
   playing = true;
   initParticles(5000);
   const first = SEQ[si++];
@@ -443,39 +439,54 @@ function startShow() {
   if (si < SEQ.length) setTimeout(runNext, first.hold);
 }
 
-// ── FIX LỖI CRASH KHI YÊU CẦU FULLSCREEN KHÔNG ĐƯỢC ──
+// ── BẬT TOÀN MÀN HÌNH (CHUẨN HÓA MỌI TRÌNH DUYỆT) ──
 function requestFS() {
   const el = document.documentElement;
+  // Các lệnh gọi Fullscreen của các trình duyệt khác nhau
   const req = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
+  
   if (req) {
     try {
       let promise = req.call(el);
-      // Kiểm tra kỹ xem trình duyệt có trả về Promise không rồi mới dùng catch (sửa lỗi undefined .catch)
-      if (promise !== undefined && promise.catch) {
+      if (promise !== undefined) {
         promise.catch(err => {
-          console.warn(`Không thể tự động bật Fullscreen (bị trình duyệt hoặc Github chặn): ${err.message}`);
+          console.warn("Fullscreen bị trình duyệt chặn:", err);
         });
       }
-    } catch(e) {
-      console.warn("Fullscreen bị lỗi nhỏ, vẫn tiếp tục chạy:", e);
+    } catch(err) {
+      console.warn("Lỗi Fullscreen:", err);
     }
   }
 }
 
-// ── FIX LỖI CLICK/TOUCH ĐỂ ĐẢM BẢO CHẠY 100% TRÊN ĐIỆN THOẠI ──
+// ── XỬ LÝ SỰ KIỆN CLICK / TOUCH (Có độ trễ 2 giây) ──
 const uiEl = document.getElementById('ui');
 
 function handleStartInteraction(e) {
-  // Tránh việc nhấn đúp vô tình trên điện thoại
+  // Ngăn chặn việc nhảy đúp sự kiện (nếu có)
+  if(e.type === 'touchend') {
+    e.preventDefault(); 
+  }
+
+  // Gỡ sự kiện để không bị ấn nhiều lần
   uiEl.removeEventListener('click', handleStartInteraction);
-  uiEl.removeEventListener('touchstart', handleStartInteraction);
+  uiEl.removeEventListener('touchend', handleStartInteraction);
   
+  // 1. Yêu cầu bật toàn màn hình ngay lập tức (Bắt buộc phải nằm ngoài TimeOut)
   requestFS();
-  startShow();
+
+  // 2. Ẩn nút nhấn đi
+  uiEl.classList.add('gone');
+
+  // 3. Đợi đúng 2 giây rồi mới bắt đầu
+  setTimeout(() => {
+    startShow();
+  }, 2000);
 }
 
+// Đổi từ touchstart sang touchend để tương thích tốt nhất trên thiết bị di động
 uiEl.addEventListener('click', handleStartInteraction);
-uiEl.addEventListener('touchstart', handleStartInteraction, {passive: true});
+uiEl.addEventListener('touchend', handleStartInteraction, {passive: false});
 
 </script>
 </body>
