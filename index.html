@@ -1,33 +1,96 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <title>KERNEL ENGINE</title>
     <style>
-        body { background: #000; color: #0f0; font-family: 'Courier New', monospace; font-size: 10px; padding: 10px; }
-        .success { color: #00ffff; }
-        .warning { color: #ffff00; }
-        .danger { color: #ff0000; }
+        body { 
+            background-color: black; 
+            color: lime; 
+            font-family: Consolas, monospace; 
+            font-size: 11px; 
+            margin: 0; 
+            padding: 10px; 
+            overflow: hidden; 
+            display: flex; 
+            flex-direction: column; 
+            height: 95vh; 
+        }
+        
+        div { 
+            box-sizing: border-box; 
+        }
+
+        .header { 
+            color: white; 
+            border-bottom: 2px solid gray; 
+            padding-bottom: 5px; 
+            margin-bottom: 10px; 
+            font-weight: bold; 
+        }
+
+        .console { 
+            flex-grow: 1; 
+            overflow-y: hidden; 
+        }
+
+        .line { 
+            border-bottom: 1px solid rgb(20, 20, 20); 
+            padding: 1px 0; 
+        }
+
+        .addr { color: gray; }
+        .info { color: cyan; }
+        .warn { color: yellow; }
+        .crit { color: red; font-weight: bold; }
     </style>
 </head>
 <body>
-    <div id="output"></div>
+
+    <div class="header">FF_NETWORK_DRIVER_v9.9.2 | KERNEL_BRIDGE: ENABLED</div>
+    <div class="console" id="console"></div>
+
     <script>
-        const log = document.getElementById('output');
-        function add(msg) {
-            log.innerHTML = `> ${msg}<br>` + log.innerHTML;
-            if (log.children.length > 20) log.lastElementChild.remove();
+        const consoleDiv = document.getElementById('console');
+        const LOG_POOL = [
+            "Hooking I/O Request Packet stack...",
+            "Redirecting UDP stream to local filter...",
+            "Memory dump at 0x4A221199",
+            "Packet encryption handshake... SUCCESS",
+            "Latency compensation: 24ms detected.",
+            "Analyzing MTU values... 1500 bytes",
+            "TCP state: ESTABLISHED",
+            "Validating Checksum... OK",
+            "Buffer overflow check: SAFE",
+            "Initializing WinDivert service...",
+            "Injecting dummy packets to maintain sync...",
+            "Target FreeFire.exe found at 0x00A410",
+            "Server response time: 38ms",
+            "Bypassing Garena Anti-Cheat module...",
+            "Packet loss: 0.02% RECOVERED",
+            "Memory address check OK"
+        ];
+
+        function getAddr() {
+            return "0x" + Math.floor(Math.random()*4294967295).toString(16).toUpperCase();
         }
 
-        setInterval(() => {
-            const hex = () => Math.floor(Math.random()*16777215).toString(16).toUpperCase();
-            const types = ["UDP_HANDSHAKE", "DATA_SYNC", "KEEP_ALIVE", "ACK_RECV"];
-            const t = types[Math.floor(Math.random()*types.length)];
+        function addLine() {
+            const log = LOG_POOL[Math.floor(Math.random() * LOG_POOL.length)];
+            const div = document.createElement('div');
+            div.className = 'line';
             
-            if(Math.random() > 0.85) {
-                add(`<span class='danger'>[!] CRITICAL: Server-Side Sync Conflict at 0x${hex()}</span>`);
-            } else {
-                add(`Injecting <span class='success'>${t}</span> | Offset: 0x${hex()} | TTL: 64ms | Status: <span class='success'>ENCRYPTED</span>`);
+            let type = Math.random() > 0.95 ? 'crit' : (Math.random() > 0.8 ? 'warn' : 'info');
+            
+            div.innerHTML = '<span class="addr">[' + getAddr() + ']</span> <span class="' + type + '">' + log + '</span>';
+            
+            consoleDiv.prepend(div);
+            if (consoleDiv.children.length > 50) {
+                consoleDiv.lastElementChild.remove();
             }
-        }, 400);
+        }
+
+        setInterval(addLine, 100);
     </script>
 </body>
 </html>
